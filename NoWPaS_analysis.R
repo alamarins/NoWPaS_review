@@ -1,3 +1,5 @@
+########------- PACKAGES -------########
+
 library(ggplot2)
 library(ggalluvial)
 library(alluvial)
@@ -8,6 +10,8 @@ library(DemografixeR)
 library(dplyr)
 library(tidyr)
 library(readxl)
+
+#######---------- DATA ----------########
 
 setwd("C:/Users/sbiwp1/OneDrive - Cardiff University/NoWPaS review paper")
 
