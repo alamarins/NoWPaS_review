@@ -10,6 +10,8 @@ library(DemografixeR)
 library(dplyr)
 library(tidyr)
 library(readxl)
+library(wordcloud2)
+library(tidytext)
 
 #######---------- DATA ----------########
 
@@ -17,6 +19,14 @@ setwd("C:/Users/sbiwp1/OneDrive - Cardiff University/NoWPaS review paper")
 
 NoWPaS_df<- read_excel("NoWPaS talk characterisation.v2.xlsx", 
                                               sheet = "Sheet1")
+
+colnames(NoWPaS_df)[7] <- "Gender"
+colnames(NoWPaS_df)[9] <- "Academia"
+colnames(NoWPaS_df)[24] <- "Trait"
+
+
+#######--------- GENDER ---------########
+
 # Names <- NoWPaS_df[, c("Speaker","Year")]
 # #Names <-unique(Names)
 # Names$First_name <- sub(" .*", "", Names$Speaker)
@@ -86,27 +96,120 @@ ggplot(sex_ratio_df, aes(x = Year, y = sex_ratio)) +
     plot.title = element_text(size = 18, face = "bold") # plot title if added
   )
 
-broad_method <- NoWPaS_df
-broad_method<- broad_method %>%
-  separate_rows(Method_decider_broad, sep = ";") %>%
-  mutate(Method_decider_broad = trimws(Method_decider_broad))%>% 
-  filter(!is.na(Method_decider_broad) & Method_decider_broad != "NA")
-broad_method$Freq<-1
-
-broad_method$Method_decider_broad <- tolower(broad_method$Method_decider_broad)
-
-ggplot(broad_method, aes(x = Year, fill = Method_decider_broad)) +
-  geom_bar(position="fill") +
-  scale_fill_brewer(palette = "Paired")+
+## Amaia : based on database Gender column
+sex_ratio <- NoWPaS_df %>%
+  filter(Gender %in% c("M", "F")) %>%       # keep only valid cases
+  group_by(Year) %>%
+  summarise(
+    nM = sum(Gender == "M"),
+    nF = sum(Gender == "F"),
+    ratio = nM / nF
+  )
+ggplot(sex_ratio, aes(x = Year, y = ratio)) +
+  geom_line(size = 1, color = "steelblue") +
+  geom_point(size = 2, color = "steelblue") +
+  geom_hline(yintercept = 1, linetype = "dashed") +
   labs(
     x = "Year",
-    y = "Count",
-    fill = "Method",
+    y = "Male : Female ratio"
   ) +
   theme_minimal()
 
-broad_method$Driver_decider <- sub(";.*", "", broad_method$Driver_decider)
 
+########--------- DISCIPLINES ---------########
+
+discipline_long <- NoWPaS_df %>%
+  separate_rows(Discipline_decider, sep = ";\\s*") %>%
+  mutate(Discipline_decider = trimws(Discipline_decider)) %>% 
+  filter(!is.na(Discipline_decider) & Discipline_decider != "NA")
+table(discipline_long$Discipline_decider)
+
+discipline_long$Discipline_decider[which(discipline_long$Discipline_decider == "Genetics (PopGen)")] <- "Genetics"
+discipline_long$Discipline_decider <- factor(discipline_long$Discipline_decider)
+levels(discipline_long$Discipline_decider) <- c("Behavioural ecology", "Disease and parasitology", "Ecology", 
+                                                "Ecotoxicology", "Evolutionary biology", "Genetics and genomics", 
+                                                "Habitat use", "Hydro-geomorphology", "Movement ecology", "Physiology")
+sort(table(discipline_long$Discipline_decider) * 100 / nrow(discipline_long))
+
+
+ggplot(discipline_long, aes(x = Year, fill = Discipline_decider)) +
+  geom_bar(position = "fill") +
+  scale_y_continuous(labels = scales::percent_format()) +
+  labs(
+    y = "Proportion",
+    fill = "Discipline"
+  ) +
+  theme_minimal() +
+  scale_fill_brewer(palette = "Paired")
+
+########---------- DRIVERS ---------########
+driver_long <- NoWPaS_df %>%
+  separate_rows(Driver_decider, sep = ";\\s*") %>%
+  mutate(Driver_decider = trimws(Driver_decider)) %>% 
+  filter(!is.na(Driver_decider) & Driver_decider != "NA")
+table(driver_long$Driver_decider)
+
+ggplot(driver_long, aes(x = Year, fill = Driver_decider)) +
+  geom_bar(position = "fill") +
+  scale_y_continuous(labels = scales::percent_format()) +
+  labs(
+    y = "Proportion",
+    fill = "Driver"
+  ) +
+  theme_minimal() +
+  scale_fill_brewer(palette = "Paired")
+
+########---------- METHODS ---------########
+
+broad_method_long <- NoWPaS_df %>%
+  separate_rows(Method_decider_broad, sep = ";") %>%
+  mutate(Method_decider_broad = trimws(Method_decider_broad))%>% 
+  filter(!is.na(Method_decider_broad) & Method_decider_broad != "NA")
+table(broad_method_long$Method_decider_broad)
+
+#broad_method$Freq<-1
+#broad_method$Method_decider_broad <- tolower(broad_method$Method_decider_broad)
+
+ggplot(broad_method_long, aes(x = Year, fill = Method_decider_broad)) +
+  geom_bar(position="fill") +
+  scale_y_continuous(labels = scales::percent_format()) +
+  labs(
+    y = "Proportion",
+    fill = "Method"
+  ) +
+  theme_minimal() +
+  scale_fill_brewer(palette = "Paired")
+
+########---------- TRAITS ---------########
+traits_long <- NoWPaS_df %>%
+  separate_rows(Trait, sep = ";\\s*") %>%
+  mutate(Trait = trimws(Trait))%>% 
+  filter(!is.na(Trait) & Trait != "NA")
+table(traits_long$Trait)
+
+traits_long$Trait[which(traits_long$Trait %in% c("Behaviour (aggression)",
+                                                "Behaviour (boldness)",
+                                                "Behaviour (competition)",
+                                                "Behaviour (exploration, boldness, aggression)",
+                                                "Behaviour (exploration)",
+                                                "Behaviour (feeding)",
+                                                "Behaviour (spawning)"))] <- "Growth"
+
+traits_long$Trait[which(traits_long$Trait == "Dispersal")] <- "Straying"
+traits_long$Trait[which(traits_long$Trait %in% c("Habitat niche", "Habitat use (spawning)"))] <- "Habitat use"
+traits_long$Trait[which(traits_long$Trait %in% c("Microbiome (gill)", "Microbiome (gut)"))] <- "Microbiome"
+traits_long$Trait[which(traits_long$Trait %in% c("Timing (emergence)", "Timing (hatching)", "Timing (migration)"))] <- "Timing"
+
+traits_freq <- traits_long %>%
+  count(Trait, sort = TRUE)
+wordcloud2(data = traits_freq, 
+           #figPath = "Salmo.png",
+           size = 1,
+           backgroundColor = "white")
+
+
+
+########---------- SANKY PLOT ---------########
 species_country <- NoWPaS_df
 species_country <- species_country %>%
   separate_rows(Focus_species, sep = ";") %>%
