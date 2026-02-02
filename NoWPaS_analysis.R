@@ -12,6 +12,8 @@ library(tidyr)
 library(readxl)
 library(wordcloud2)
 library(tidytext)
+library(broom)
+library(purrr)
 
 #######---------- DATA ----------########
 
@@ -20,9 +22,24 @@ setwd("C:/Users/sbiwp1/OneDrive - Cardiff University/NoWPaS review paper")
 NoWPaS_df<- read_excel("NoWPaS talk characterisation.v2.xlsx", 
                                               sheet = "Sheet1")
 
+#rename columns
+colnames(NoWPaS_df)[1] <- "AbstractID"
 colnames(NoWPaS_df)[7] <- "Gender"
 colnames(NoWPaS_df)[9] <- "Academia"
 colnames(NoWPaS_df)[24] <- "Trait"
+
+#remove keynotes
+NoWPaS_df <- NoWPaS_df %>%
+  filter(Keynote == "N")
+
+#abstract number per year
+abstracts_per_year <- NoWPaS_df %>%
+  distinct(AbstractID, Year) %>%
+  count(Year, name = "N_abstracts")
+plot(abstracts_per_year, type="l")
+abline(lm(N_abstracts ~ Year, data = abstracts_per_year), col="red")
+summary(lm(N_abstracts ~ Year, data = abstracts_per_year))
+
 
 
 #######--------- GENDER ---------########
@@ -131,7 +148,7 @@ levels(discipline_long$Discipline_decider) <- c("Behavioural ecology", "Disease 
                                                 "Habitat use", "Hydro-geomorphology", "Movement ecology", "Physiology")
 sort(table(discipline_long$Discipline_decider) * 100 / nrow(discipline_long))
 
-
+#stacked barplot
 ggplot(discipline_long, aes(x = Year, fill = Discipline_decider)) +
   geom_bar(position = "fill") +
   scale_y_continuous(labels = scales::percent_format()) +
@@ -142,13 +159,125 @@ ggplot(discipline_long, aes(x = Year, fill = Discipline_decider)) +
   theme_minimal() +
   scale_fill_brewer(palette = "Paired")
 
+#lines (relative proportion)
+discipline_long %>%
+  group_by(Year, Discipline_decider) %>%
+  summarise(n = n(), .groups = "drop") %>%
+  complete(Year, Discipline_decider, fill = list(n = 0)) %>%
+  group_by(Year) %>%
+  mutate(prop = n / sum(n)) %>%
+  ggplot(aes(x = Year, y = prop, color = Discipline_decider)) +
+  geom_point(size = 1, show.legend = F) +
+  geom_line(size = 1, alpha=0.5, show.legend = F) +
+  geom_smooth(aes(fill = Discipline_decider), se = T, linewidth = 1, show.legend = F)+
+  scale_y_continuous(labels = scales::percent_format()) +
+  labs(
+    y = "Proportion",
+    color = "Discipline"
+  ) +
+  theme_minimal() +
+  scale_color_brewer(palette = "Paired") +
+  scale_fill_brewer(palette = "Paired") +
+  facet_wrap(~ Discipline_decider, scales = "fixed")
+
+
+#absolute numbers
+discipline_long %>%
+  group_by(Year, Discipline_decider) %>%
+  summarise(n = n(), .groups = "drop") %>%
+  complete(Year, Discipline_decider, fill = list(n = 0)) %>%
+  ggplot(aes(x = Year, y = n, color = Discipline_decider)) +
+  geom_point(size = 1, show.legend = F) +
+  geom_line(size = 1, alpha = 0.5, show.legend = F) +
+  geom_smooth(aes(fill = Discipline_decider), se = T, linewidth = 1, show.legend = F)+
+  labs(
+    y = "Number of studies",
+    color = "Discipline"
+  ) +
+  theme_minimal() +
+  scale_color_brewer(palette = "Paired") +
+  scale_fill_brewer(palette = "Paired") +
+  facet_wrap(~ Discipline_decider, scales = "fixed")
+
+#stats
+#cannot do multinomial model for proportions because disciplines are not exclusive
+#so glm binomial for each discipline separately: what is the probability of each discipline over time?
+discipline_ts <- discipline_long %>%
+  group_by(Year, Discipline_decider) %>%
+  summarise(n = n(), .groups = "drop") %>%
+  complete(Year, Discipline_decider, fill = list(n = 0)) %>%
+  group_by(Year) %>%
+  mutate(N = sum(n)) %>%
+  ungroup()
+discipline_ts$Year_scaled <- scale(discipline_ts$Year, center = TRUE, scale = TRUE)
+
+discipline_ts <- discipline_ts %>%
+  left_join(abstracts_per_year, by = "Year") #need the number of abstracts as the total max number of occurence of the discipline
+
+glm_results <- discipline_ts %>%
+  group_by(Discipline_decider) %>%
+  group_modify(~ {
+    
+    m <- glm(
+      cbind(n, N_abstracts - n) ~ Year_scaled,
+      family = quasibinomial(),   # safer default
+      data = .x
+    )
+    
+    tidy(m) %>%
+      filter(term == "Year_scaled") %>%
+      mutate(
+        dispersion = deviance(m) / df.residual(m),
+        n_years = n_distinct(.x$Year)
+      )
+  }) %>%
+  ungroup()
+glm_results #Estimates are log-odds change per 1 SD increase in year
+glm_results %>%
+  mutate(p_adj = p.adjust(p.value, method = "BH"))
+
+#or rather using counts
+counts_ts <- discipline_long %>%
+  group_by(Year, Discipline_decider) %>%
+  summarise(n = n(), .groups = "drop") %>%
+  complete(Year, Discipline_decider, fill = list(n = 0))
+
+trend_pois <- counts_ts %>%
+  group_by(Discipline_decider) %>%
+  do({
+    m <- glm(n ~ scale(Year), family = poisson, data = .)
+    tidy(m)
+  }) %>%
+  filter(term == "scale(Year)")
+trend_pois <- trend_pois %>%
+  ungroup() %>%
+  mutate(
+    p_adj = p.adjust(p.value, method = "BH"),
+    direction = case_when(
+      estimate > 0 & p_adj < 0.05 ~ "Increasing",
+      estimate < 0 & p_adj < 0.05 ~ "Decreasing",
+      TRUE ~ "Stable"
+    )
+  )
+trend_pois
+
+check_dispersion <- counts_ts %>%
+  group_by(Discipline_decider) %>%
+  do({
+    m <- glm(n ~ scale(Year), family = poisson, data = .)
+    disp <- sum(residuals(m, type = "pearson")^2) / df.residual(m)
+    data.frame(dispersion = disp)
+  })
+check_dispersion
+
 ########---------- DRIVERS ---------########
 driver_long <- NoWPaS_df %>%
   separate_rows(Driver_decider, sep = ";\\s*") %>%
   mutate(Driver_decider = trimws(Driver_decider)) %>% 
   filter(!is.na(Driver_decider) & Driver_decider != "NA")
-table(driver_long$Driver_decider)
+sort(table(driver_long$Driver_decider))/ nrow(driver_long) * 100
 
+#stacked barplot
 ggplot(driver_long, aes(x = Year, fill = Driver_decider)) +
   geom_bar(position = "fill") +
   scale_y_continuous(labels = scales::percent_format()) +
@@ -159,17 +288,126 @@ ggplot(driver_long, aes(x = Year, fill = Driver_decider)) +
   theme_minimal() +
   scale_fill_brewer(palette = "Paired")
 
+#lines (relative proportion)
+driver_long %>%
+  group_by(Year, Driver_decider) %>%
+  summarise(n = n(), .groups = "drop") %>%
+  complete(Year, Driver_decider, fill = list(n = 0)) %>%
+  group_by(Year) %>%
+  mutate(prop = n / sum(n)) %>%
+  ggplot(aes(x = Year, y = prop, color = Driver_decider)) +
+  geom_point(size = 1, show.legend = F) +
+  geom_line(size = 1, alpha=0.5, show.legend = F) +
+  geom_smooth(aes(fill = Driver_decider), se = T, linewidth = 1, show.legend = F)+
+  scale_y_continuous(labels = scales::percent_format()) +
+  labs(
+    y = "Proportion",
+    color = "Driver"
+  ) +
+  theme_minimal() +
+  scale_color_brewer(palette = "Paired") +
+  scale_fill_brewer(palette = "Paired") +
+  facet_wrap(~ Driver_decider, scales = "fixed")
+
+#absolute numbers
+driver_long %>% 
+  group_by(Year, Driver_decider) %>%
+  summarise(n = n(), .groups = "drop") %>%
+  complete(Year, Driver_decider, fill = list(n = 0)) %>%
+  ggplot(aes(x = Year, y = n, color = Driver_decider)) +
+  geom_point(size = 1, show.legend = F) +
+  geom_line(size = 1, alpha = 0.5, show.legend = F) +
+  geom_smooth(aes(fill = Driver_decider), se = T, linewidth = 1, show.legend = F)+
+  labs(
+    y = "Number of studies",
+    color = "Driver"
+  ) +
+  theme_minimal() +
+  scale_color_brewer(palette = "Paired") +
+  scale_fill_brewer(palette = "Paired") +
+  facet_wrap(~ Driver_decider, scales = "fixed")
+
+
+#stats
+#cannot do multinomial model for proportions because disciplines are not exclusive
+#so glm binomial for each discipline separately: what is the probability of each discipline over time?
+drivers_ts <- driver_long %>%
+  group_by(Year, Driver_decider) %>%
+  summarise(n = n(), .groups = "drop") %>%
+  complete(Year, Driver_decider, fill = list(n = 0)) %>%
+  group_by(Year) %>%
+  mutate(N = sum(n)) %>%
+  ungroup()
+drivers_ts$Year_scaled <- scale(drivers_ts$Year, center = TRUE, scale = TRUE)
+
+drivers_ts <- drivers_ts %>%
+  left_join(abstracts_per_year, by = "Year") #need the number of abstracts as the total max number of occurence of the discipline
+
+glm_results <- drivers_ts %>%
+  group_by(Driver_decider) %>%
+  group_modify(~ {
+    
+    m <- glm(
+      cbind(n, N_abstracts - n) ~ Year_scaled,
+      family = quasibinomial(),   # safer default
+      data = .x
+    )
+    
+    tidy(m) %>%
+      filter(term == "Year_scaled") %>%
+      mutate(
+        dispersion = deviance(m) / df.residual(m),
+        n_years = n_distinct(.x$Year)
+      )
+  }) %>%
+  ungroup()
+glm_results #Estimates are log-odds change per 1 SD increase in year
+glm_results %>%
+  mutate(p_adj = p.adjust(p.value, method = "BH"))
+
+#stats using counts
+counts_ts <- driver_long %>%
+  group_by(Year, Driver_decider) %>%
+  summarise(n = n(), .groups = "drop") %>%
+  complete(Year, Driver_decider, fill = list(n = 0))
+
+trend_pois <- counts_ts %>%
+  group_by(Driver_decider) %>%
+  do({
+    m <- glm(n ~ scale(Year), family = poisson, data = .)
+    tidy(m)
+  }) %>%
+  filter(term == "scale(Year)")
+trend_pois <- trend_pois %>%
+  ungroup() %>%
+  mutate(
+    p_adj = p.adjust(p.value, method = "BH"),
+    direction = case_when(
+      estimate > 0 & p_adj < 0.05 ~ "Increasing",
+      estimate < 0 & p_adj < 0.05 ~ "Decreasing",
+      TRUE ~ "Stable"
+    )
+  )
+trend_pois
+
+check_dispersion <- counts_ts %>%
+  group_by(Driver_decider) %>%
+  do({
+    m <- glm(n ~ scale(Year), family = poisson, data = .)
+    disp <- sum(residuals(m, type = "pearson")^2) / df.residual(m)
+    data.frame(dispersion = disp)
+  })
+check_dispersion
+
 ########---------- METHODS ---------########
 
 broad_method_long <- NoWPaS_df %>%
   separate_rows(Method_decider_broad, sep = ";") %>%
   mutate(Method_decider_broad = trimws(Method_decider_broad))%>% 
   filter(!is.na(Method_decider_broad) & Method_decider_broad != "NA")
-table(broad_method_long$Method_decider_broad)
+sort(table(broad_method_long$Method_decider_broad)) / nrow(broad_method_long) * 100
 
-#broad_method$Freq<-1
-#broad_method$Method_decider_broad <- tolower(broad_method$Method_decider_broad)
-
+#stacked barplot
 ggplot(broad_method_long, aes(x = Year, fill = Method_decider_broad)) +
   geom_bar(position="fill") +
   scale_y_continuous(labels = scales::percent_format()) +
@@ -179,6 +417,107 @@ ggplot(broad_method_long, aes(x = Year, fill = Method_decider_broad)) +
   ) +
   theme_minimal() +
   scale_fill_brewer(palette = "Paired")
+
+#lines (relative proportion)
+broad_method_long %>% 
+  group_by(Year, Method_decider_broad) %>%
+  summarise(n = n(), .groups = "drop") %>%
+  complete(Year, Method_decider_broad, fill = list(n = 0)) %>%
+  group_by(Year) %>%
+  mutate(prop = n / sum(n)) %>%
+  ggplot(aes(x = Year, y = prop, color = Method_decider_broad)) +
+  geom_point(size = 1, show.legend = F) +
+  geom_line(size = 1, alpha=0.5, show.legend = F) +
+  geom_smooth(aes(fill = Method_decider_broad), se = T, linewidth = 1, show.legend = F)+
+  scale_y_continuous(labels = scales::percent_format()) +
+  labs(
+    y = "Proportion",
+    color = "Method"
+  ) +
+  theme_minimal() +
+  scale_color_brewer(palette = "Paired") +
+  scale_fill_brewer(palette = "Paired") +
+  facet_wrap(~ Method_decider_broad, scales = "fixed")
+
+#absolute numbers
+broad_method_long %>% 
+  group_by(Year, Method_decider_broad) %>%
+  summarise(n = n(), .groups= "drop") %>%
+  complete(Year, Method_decider_broad, fill = list(n = 0)) %>%
+  ggplot(aes(x = Year, y = n, color = Method_decider_broad)) +
+  geom_point(size = 1, show.legend = F) +
+  geom_line(size = 1, alpha=0.5, show.legend = F) +
+  geom_smooth(aes(fill = Method_decider_broad), se = T, linewidth = 1, show.legend = F)+
+  labs(
+    y = "Number of studies",
+    color = "Method"
+  ) +
+  theme_minimal() +
+  scale_color_brewer(palette = "Paired") +
+  scale_fill_brewer(palette = "Paired") +
+  facet_wrap(~ Method_decider_broad, scales = "fixed")
+
+
+#stats
+#cannot do multinomial model for proportions because disciplines are not exclusive
+#so glm binomial for each discipline separately: what is the probability of each discipline over time?
+method_ts <- broad_method_long %>%
+  group_by(Year, Method_decider_broad) %>%
+  summarise(n = n(), .groups = "drop") %>%
+  complete(Year, Method_decider_broad, fill = list(n = 0)) %>%
+  group_by(Year) %>%
+  mutate(N = sum(n)) %>%
+  ungroup()
+method_ts$Year_scaled <- scale(method_ts$Year, center = TRUE, scale = TRUE)
+
+method_ts <- method_ts %>%
+  left_join(abstracts_per_year, by = "Year") #need the number of abstracts as the total max number of occurence of the discipline
+
+glm_results <- method_ts %>%
+  group_by(Method_decider_broad) %>%
+  group_modify(~ {
+    
+    m <- glm(
+      cbind(n, N_abstracts - n) ~ Year_scaled,
+      family = quasibinomial(),   # safer default
+      data = .x
+    )
+    
+    tidy(m) %>%
+      filter(term == "Year_scaled") %>%
+      mutate(
+        dispersion = deviance(m) / df.residual(m),
+        n_years = n_distinct(.x$Year)
+      )
+  }) %>%
+  ungroup()
+glm_results #Estimates are log-odds change per 1 SD increase in year
+glm_results %>%
+  mutate(p_adj = p.adjust(p.value, method = "BH"))
+
+#stats using counts
+counts_ts <- broad_method_long %>%
+  group_by(Year, Method_decider_broad) %>%
+  summarise(n = n(), .groups = "drop") %>%
+  complete(Year, Method_decider_broad, fill = list(n = 0))
+trend_pois <- counts_ts %>%
+  group_by(Method_decider_broad) %>%
+  do({
+    m <- glm(n ~ scale(Year), family = poisson, data = .)
+    tidy(m)
+  }) %>%
+  filter(term == "scale(Year)")
+trend_pois <- trend_pois %>%
+  ungroup() %>%
+  mutate(
+    p_adj = p.adjust(p.value, method = "BH"),
+    direction = case_when(
+      estimate > 0 & p_adj < 0.05 ~ "Increasing",
+      estimate < 0 & p_adj < 0.05 ~ "Decreasing",
+      TRUE ~ "Stable"
+    )
+  )
+trend_pois
 
 ########---------- TRAITS ---------########
 traits_long <- NoWPaS_df %>%
