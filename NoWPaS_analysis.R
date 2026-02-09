@@ -14,6 +14,8 @@ library(wordcloud2)
 library(tidytext)
 library(broom)
 library(purrr)
+library(dplyr)
+library(stringr)
 
 #######---------- DATA ----------########
 
@@ -37,6 +39,8 @@ abstracts_per_year <- NoWPaS_df %>%
   distinct(AbstractID, Year) %>%
   count(Year, name = "N_abstracts")
 plot(abstracts_per_year, type="l")
+mean(abstracts_per_year$N_abstracts)
+sd(abstracts_per_year$N_abstracts)
 abline(lm(N_abstracts ~ Year, data = abstracts_per_year), col="red")
 summary(lm(N_abstracts ~ Year, data = abstracts_per_year))
 
@@ -133,6 +137,132 @@ ggplot(sex_ratio, aes(x = Year, y = ratio)) +
   theme_minimal()
 
 
+
+########---------- SPECIES ---------########
+species_long <- NoWPaS_df %>%
+  separate_rows(Focus_species, sep = ";\\s*") %>%
+  mutate(Focus_species = trimws(Focus_species)) %>% 
+  filter(!is.na(Focus_species) & Focus_species != "NA")
+table(species_long$Focus_species)
+
+#combine for same species (e.g. brown trout (anadromous) and brown trout (resident) -> brown trout)
+species_long_clean <- species_long %>%
+  mutate(
+    Parent_species = case_when(
+      str_detect(Focus_species, regex("Atlantic salmon", ignore_case = TRUE)) ~ "Atlantic salmon",
+      str_detect(Focus_species, regex("Arctic char", ignore_case = TRUE)) ~ "Arctic char",
+      str_detect(Focus_species, regex("Brown trout", ignore_case = TRUE)) ~ "Brown trout",
+      str_detect(Focus_species, regex("Burbot", ignore_case = TRUE)) ~ "Burbot",
+      str_detect(Focus_species, regex("Beaver", ignore_case = TRUE)) ~ "Beaver",
+      str_detect(Focus_species, regex("Whitefish", ignore_case = TRUE)) ~ "Whitefish",
+      str_detect(Focus_species, regex("PKD", ignore_case = TRUE)) ~ "Myxozoan (PKD)",
+      TRUE ~ Focus_species  # keep original if not matched
+    )
+  )
+sort(table(species_long_clean$Parent_species))
+
+#detailed 
+atlantic_salmon_sub <- species_long_clean %>%
+  filter(Parent_species == "Atlantic salmon")
+sort(table(atlantic_salmon_sub$Focus_species))
+
+brown_trout_sub <- species_long_clean %>%
+  filter(Parent_species == "Brown trout")
+sort(table(brown_trout_sub$Focus_species))
+
+rare_species <- species_long_clean %>%
+  count(Parent_species) %>%
+  filter(n == 1) %>%
+  pull(Parent_species)
+species_long_recoded <- species_long_clean %>%
+  mutate(
+    Parent_species_recoded = if_else(
+      Parent_species %in% rare_species,
+      "Other",
+      Parent_species
+    )
+  )
+
+#visualise species over time
+species_ts_n <- species_long_recoded %>%
+  count(Year, Parent_species_recoded)
+species_order <- species_ts_n %>%
+  group_by(Parent_species_recoded) %>%
+  summarise(total_n = sum(n), .groups = "drop") %>%
+  arrange(desc(total_n))
+species_ts_n <- species_ts_n %>%
+  left_join(species_order, by = "Parent_species_recoded") %>%
+  mutate(
+    Parent_species_recoded = factor(
+      Parent_species_recoded,
+      levels = species_order$Parent_species_recoded
+    )
+  )
+
+ggplot(species_ts_n, aes(Year, Parent_species_recoded, fill = n)) +
+  geom_tile() +
+  scale_fill_viridis_c(trans = "sqrt") +
+  labs(fill = "Number of abstracts") +
+  theme_minimal()
+
+ggplot(species_ts_n, aes(Year, Parent_species_recoded, size = n)) +
+  geom_point(alpha = 0.7) +
+  scale_size(range = c(0.5, 6)) +
+  theme_minimal() +
+  labs(size = "n abstracts")
+
+########---------- HABITAT ---------########
+habitat_long <- NoWPaS_df %>%
+  separate_rows(Habitat, sep = ";\\s*") %>%
+  mutate(Habitat = trimws(Habitat)) %>% 
+  filter(!is.na(Habitat) & Habitat != "NA")
+table(habitat_long$Habitat)
+
+#absolute numbers for those with more than 10 occurrences
+habitat_long %>%
+  filter(Habitat %in% c("River", "Lake", "Marine")) %>% 
+  group_by(Year, Habitat) %>%
+  summarise(n = n(), .groups = "drop") %>%
+  complete(Year, Habitat, fill = list(n = 0)) %>%
+  ggplot(aes(x = Year, y = n, color = Habitat)) +
+  geom_point(size = 1, show.legend = F) +
+  geom_line(size = 1, alpha = 0.5, show.legend = F) +
+  geom_smooth(aes(fill = Habitat), se = T, linewidth = 1, show.legend = F)+
+  labs(
+    y = "Number of studies",
+    color = "Habitat"
+  ) +
+  theme_minimal() +
+  scale_color_brewer(palette = "Paired") +
+  scale_fill_brewer(palette = "Paired") +
+  facet_wrap(~ Habitat, scales = "fixed")
+
+########---------- LIFE STAGE ---------########
+lifestage_long <- NoWPaS_df %>%
+  separate_rows(Lifestage, sep = ";\\s*") %>%
+  mutate(Lifestage = trimws(Lifestage)) %>% 
+  filter(!is.na(Lifestage) & Lifestage != "NA")
+table(lifestage_long$Lifestage)
+
+#absolute numbers
+lifestage_long %>%
+  filter(Lifestage %in% c("Egg", "Fry", "Juvenile", "Parr", "Smolt", "Adult")) %>%
+  group_by(Year, Lifestage) %>%
+  summarise(n = n(), .groups = "drop") %>%
+  complete(Year, Lifestage, fill = list(n = 0)) %>%
+  ggplot(aes(x = Year, y = n, color = Lifestage)) +
+  geom_point(size = 1, show.legend = F) +
+  geom_line(size = 1, alpha = 0.5, show.legend = F) +
+  geom_smooth(aes(fill = Lifestage), se = T, linewidth = 1, show.legend = F)+
+  labs(
+    y = "Number of studies",
+    color = "Lifestage"
+  ) +
+  theme_minimal() +
+  scale_color_brewer(palette = "Paired") +
+  scale_fill_brewer(palette = "Paired") +
+  facet_wrap(~ Lifestage, scales = "fixed")
+
 ########--------- DISCIPLINES ---------########
 
 discipline_long <- NoWPaS_df %>%
@@ -148,37 +278,37 @@ levels(discipline_long$Discipline_decider) <- c("Behavioural ecology", "Disease 
                                                 "Habitat use", "Hydro-geomorphology", "Movement ecology", "Physiology")
 sort(table(discipline_long$Discipline_decider) * 100 / nrow(discipline_long))
 
-#stacked barplot
-ggplot(discipline_long, aes(x = Year, fill = Discipline_decider)) +
-  geom_bar(position = "fill") +
-  scale_y_continuous(labels = scales::percent_format()) +
-  labs(
-    y = "Proportion",
-    fill = "Discipline"
-  ) +
-  theme_minimal() +
-  scale_fill_brewer(palette = "Paired")
+# #stacked barplot
+# ggplot(discipline_long, aes(x = Year, fill = Discipline_decider)) +
+#   geom_bar(position = "fill") +
+#   scale_y_continuous(labels = scales::percent_format()) +
+#   labs(
+#     y = "Proportion",
+#     fill = "Discipline"
+#   ) +
+#   theme_minimal() +
+#   scale_fill_brewer(palette = "Paired")
 
-#lines (relative proportion)
-discipline_long %>%
-  group_by(Year, Discipline_decider) %>%
-  summarise(n = n(), .groups = "drop") %>%
-  complete(Year, Discipline_decider, fill = list(n = 0)) %>%
-  group_by(Year) %>%
-  mutate(prop = n / sum(n)) %>%
-  ggplot(aes(x = Year, y = prop, color = Discipline_decider)) +
-  geom_point(size = 1, show.legend = F) +
-  geom_line(size = 1, alpha=0.5, show.legend = F) +
-  geom_smooth(aes(fill = Discipline_decider), se = T, linewidth = 1, show.legend = F)+
-  scale_y_continuous(labels = scales::percent_format()) +
-  labs(
-    y = "Proportion",
-    color = "Discipline"
-  ) +
-  theme_minimal() +
-  scale_color_brewer(palette = "Paired") +
-  scale_fill_brewer(palette = "Paired") +
-  facet_wrap(~ Discipline_decider, scales = "fixed")
+# #lines (relative proportion)
+# discipline_long %>%
+#   group_by(Year, Discipline_decider) %>%
+#   summarise(n = n(), .groups = "drop") %>%
+#   complete(Year, Discipline_decider, fill = list(n = 0)) %>%
+#   group_by(Year) %>%
+#   mutate(prop = n / sum(n)) %>%
+#   ggplot(aes(x = Year, y = prop, color = Discipline_decider)) +
+#   geom_point(size = 1, show.legend = F) +
+#   geom_line(size = 1, alpha=0.5, show.legend = F) +
+#   geom_smooth(aes(fill = Discipline_decider), se = T, linewidth = 1, show.legend = F)+
+#   scale_y_continuous(labels = scales::percent_format()) +
+#   labs(
+#     y = "Proportion",
+#     color = "Discipline"
+#   ) +
+#   theme_minimal() +
+#   scale_color_brewer(palette = "Paired") +
+#   scale_fill_brewer(palette = "Paired") +
+#   facet_wrap(~ Discipline_decider, scales = "fixed")
 
 
 #absolute numbers
@@ -236,39 +366,103 @@ glm_results #Estimates are log-odds change per 1 SD increase in year
 glm_results %>%
   mutate(p_adj = p.adjust(p.value, method = "BH"))
 
-#or rather using counts
-counts_ts <- discipline_long %>%
-  group_by(Year, Discipline_decider) %>%
-  summarise(n = n(), .groups = "drop") %>%
-  complete(Year, Discipline_decider, fill = list(n = 0))
+# #or rather using counts
+# counts_ts <- discipline_long %>%
+#   group_by(Year, Discipline_decider) %>%
+#   summarise(n = n(), .groups = "drop") %>%
+#   complete(Year, Discipline_decider, fill = list(n = 0))
+# 
+# trend_pois <- counts_ts %>%
+#   group_by(Discipline_decider) %>%
+#   do({
+#     m <- glm(n ~ scale(Year), family = poisson, data = .)
+#     tidy(m)
+#   }) %>%
+#   filter(term == "scale(Year)")
+# trend_pois <- trend_pois %>%
+#   ungroup() %>%
+#   mutate(
+#     p_adj = p.adjust(p.value, method = "BH"),
+#     direction = case_when(
+#       estimate > 0 & p_adj < 0.05 ~ "Increasing",
+#       estimate < 0 & p_adj < 0.05 ~ "Decreasing",
+#       TRUE ~ "Stable"
+#     )
+#   )
+# trend_pois
+# 
+# check_dispersion <- counts_ts %>%
+#   group_by(Discipline_decider) %>%
+#   do({
+#     m <- glm(n ~ scale(Year), family = poisson, data = .)
+#     disp <- sum(residuals(m, type = "pearson")^2) / df.residual(m)
+#     data.frame(dispersion = disp)
+#   })
+# check_dispersion
 
-trend_pois <- counts_ts %>%
-  group_by(Discipline_decider) %>%
-  do({
-    m <- glm(n ~ scale(Year), family = poisson, data = .)
-    tidy(m)
-  }) %>%
-  filter(term == "scale(Year)")
-trend_pois <- trend_pois %>%
-  ungroup() %>%
+#check disciplines by species
+discipline_long_species <- discipline_long %>%
   mutate(
-    p_adj = p.adjust(p.value, method = "BH"),
-    direction = case_when(
-      estimate > 0 & p_adj < 0.05 ~ "Increasing",
-      estimate < 0 & p_adj < 0.05 ~ "Decreasing",
-      TRUE ~ "Stable"
+    Main_species = case_when(
+      grepl("Atlantic salmon", Focus_species, ignore.case = TRUE) ~ "Atlantic salmon",
+      grepl("Brown trout", Focus_species, ignore.case = TRUE) ~ "Brown trout",
+      TRUE ~ NA_character_
     )
-  )
-trend_pois
+  ) %>%
+  filter(!is.na(Main_species))
 
-check_dispersion <- counts_ts %>%
+discipline_ts_species <- discipline_long_species %>%
+  group_by(Year, Main_species, Discipline_decider) %>%
+  summarise(n = n(), .groups = "drop") %>%
+  complete(Year, Main_species, Discipline_decider, fill = list(n = 0))
+
+ggplot(discipline_ts_species,
+       aes(x = Year, y = n, colour = Discipline_decider)) +
+  geom_point(size = 1, show.legend = FALSE) +
+  geom_line(alpha = 0.6, show.legend = FALSE) +
+  geom_smooth(se = FALSE, linewidth = 1, show.legend = FALSE) +
+  facet_grid(Discipline_decider ~ Main_species, scales = "fixed") +
+  labs(
+    y = "Number of studies",
+    x = "Year"
+  ) +
+  theme_minimal() +
+  scale_color_brewer(palette = "Paired")
+
+#stats species interaction
+discipline_ts_species <- discipline_long_species %>%
+  group_by(Year, Main_species, Discipline_decider) %>%
+  summarise(n = n(), .groups = "drop") %>%
+  complete(Year, Main_species, Discipline_decider, fill = list(n = 0)) %>%
+  group_by(Year) %>%
+  mutate(N = sum(n)) %>%
+  ungroup()
+discipline_ts_species$Year_scaled <- scale(discipline_ts_species$Year, center = TRUE, scale = TRUE)
+
+discipline_ts_species <- discipline_ts_species %>%
+  left_join(abstracts_per_year, by = "Year") #need the number of abstracts as the total max number of occurence of the discipline
+
+glm_results <- discipline_ts_species %>%
   group_by(Discipline_decider) %>%
-  do({
-    m <- glm(n ~ scale(Year), family = poisson, data = .)
-    disp <- sum(residuals(m, type = "pearson")^2) / df.residual(m)
-    data.frame(dispersion = disp)
-  })
-check_dispersion
+  group_modify(~ {
+    
+    m <- glm(
+      cbind(n, N_abstracts - n) ~ Year_scaled * Main_species,
+      family = quasibinomial(),   # safer default
+      data = .x
+    )
+    
+    tidy(m) %>%
+      filter(term != "(Intercept)") %>%   # keep all explanatory terms
+      mutate(
+        dispersion = deviance(m) / df.residual(m),
+        n_years = n_distinct(.x$Year)
+      )
+  }) %>%
+  ungroup()
+glm_results #Estimates are log-odds change per 1 SD increase in year
+adjusted <- glm_results %>%
+  mutate(p_adj = p.adjust(p.value, method = "BH"))
 
 ########---------- DRIVERS ---------########
 driver_long <- NoWPaS_df %>%
@@ -277,37 +471,37 @@ driver_long <- NoWPaS_df %>%
   filter(!is.na(Driver_decider) & Driver_decider != "NA")
 sort(table(driver_long$Driver_decider))/ nrow(driver_long) * 100
 
-#stacked barplot
-ggplot(driver_long, aes(x = Year, fill = Driver_decider)) +
-  geom_bar(position = "fill") +
-  scale_y_continuous(labels = scales::percent_format()) +
-  labs(
-    y = "Proportion",
-    fill = "Driver"
-  ) +
-  theme_minimal() +
-  scale_fill_brewer(palette = "Paired")
+# #stacked barplot
+# ggplot(driver_long, aes(x = Year, fill = Driver_decider)) +
+#   geom_bar(position = "fill") +
+#   scale_y_continuous(labels = scales::percent_format()) +
+#   labs(
+#     y = "Proportion",
+#     fill = "Driver"
+#   ) +
+#   theme_minimal() +
+#   scale_fill_brewer(palette = "Paired")
 
-#lines (relative proportion)
-driver_long %>%
-  group_by(Year, Driver_decider) %>%
-  summarise(n = n(), .groups = "drop") %>%
-  complete(Year, Driver_decider, fill = list(n = 0)) %>%
-  group_by(Year) %>%
-  mutate(prop = n / sum(n)) %>%
-  ggplot(aes(x = Year, y = prop, color = Driver_decider)) +
-  geom_point(size = 1, show.legend = F) +
-  geom_line(size = 1, alpha=0.5, show.legend = F) +
-  geom_smooth(aes(fill = Driver_decider), se = T, linewidth = 1, show.legend = F)+
-  scale_y_continuous(labels = scales::percent_format()) +
-  labs(
-    y = "Proportion",
-    color = "Driver"
-  ) +
-  theme_minimal() +
-  scale_color_brewer(palette = "Paired") +
-  scale_fill_brewer(palette = "Paired") +
-  facet_wrap(~ Driver_decider, scales = "fixed")
+# #lines (relative proportion)
+# driver_long %>%
+#   group_by(Year, Driver_decider) %>%
+#   summarise(n = n(), .groups = "drop") %>%
+#   complete(Year, Driver_decider, fill = list(n = 0)) %>%
+#   group_by(Year) %>%
+#   mutate(prop = n / sum(n)) %>%
+#   ggplot(aes(x = Year, y = prop, color = Driver_decider)) +
+#   geom_point(size = 1, show.legend = F) +
+#   geom_line(size = 1, alpha=0.5, show.legend = F) +
+#   geom_smooth(aes(fill = Driver_decider), se = T, linewidth = 1, show.legend = F)+
+#   scale_y_continuous(labels = scales::percent_format()) +
+#   labs(
+#     y = "Proportion",
+#     color = "Driver"
+#   ) +
+#   theme_minimal() +
+#   scale_color_brewer(palette = "Paired") +
+#   scale_fill_brewer(palette = "Paired") +
+#   facet_wrap(~ Driver_decider, scales = "fixed")
 
 #absolute numbers
 driver_long %>% 
@@ -365,39 +559,103 @@ glm_results #Estimates are log-odds change per 1 SD increase in year
 glm_results %>%
   mutate(p_adj = p.adjust(p.value, method = "BH"))
 
-#stats using counts
-counts_ts <- driver_long %>%
-  group_by(Year, Driver_decider) %>%
-  summarise(n = n(), .groups = "drop") %>%
-  complete(Year, Driver_decider, fill = list(n = 0))
+# #stats using counts
+# counts_ts <- driver_long %>%
+#   group_by(Year, Driver_decider) %>%
+#   summarise(n = n(), .groups = "drop") %>%
+#   complete(Year, Driver_decider, fill = list(n = 0))
+# 
+# trend_pois <- counts_ts %>%
+#   group_by(Driver_decider) %>%
+#   do({
+#     m <- glm(n ~ scale(Year), family = poisson, data = .)
+#     tidy(m)
+#   }) %>%
+#   filter(term == "scale(Year)")
+# trend_pois <- trend_pois %>%
+#   ungroup() %>%
+#   mutate(
+#     p_adj = p.adjust(p.value, method = "BH"),
+#     direction = case_when(
+#       estimate > 0 & p_adj < 0.05 ~ "Increasing",
+#       estimate < 0 & p_adj < 0.05 ~ "Decreasing",
+#       TRUE ~ "Stable"
+#     )
+#   )
+# trend_pois
+# 
+# check_dispersion <- counts_ts %>%
+#   group_by(Driver_decider) %>%
+#   do({
+#     m <- glm(n ~ scale(Year), family = poisson, data = .)
+#     disp <- sum(residuals(m, type = "pearson")^2) / df.residual(m)
+#     data.frame(dispersion = disp)
+#   })
+# check_dispersion
 
-trend_pois <- counts_ts %>%
-  group_by(Driver_decider) %>%
-  do({
-    m <- glm(n ~ scale(Year), family = poisson, data = .)
-    tidy(m)
-  }) %>%
-  filter(term == "scale(Year)")
-trend_pois <- trend_pois %>%
-  ungroup() %>%
+#check driver by species
+drivers_long_species <- driver_long %>%
   mutate(
-    p_adj = p.adjust(p.value, method = "BH"),
-    direction = case_when(
-      estimate > 0 & p_adj < 0.05 ~ "Increasing",
-      estimate < 0 & p_adj < 0.05 ~ "Decreasing",
-      TRUE ~ "Stable"
+    Main_species = case_when(
+      grepl("Atlantic salmon", Focus_species, ignore.case = TRUE) ~ "Atlantic salmon",
+      grepl("Brown trout", Focus_species, ignore.case = TRUE) ~ "Brown trout",
+      TRUE ~ NA_character_
     )
-  )
-trend_pois
+  ) %>%
+  filter(!is.na(Main_species))
 
-check_dispersion <- counts_ts %>%
+driver_ts_species <- drivers_long_species %>%
+  group_by(Year, Main_species, Driver_decider) %>%
+  summarise(n = n(), .groups = "drop") %>%
+  complete(Year, Main_species, Driver_decider, fill = list(n = 0))
+
+ggplot(driver_ts_species,
+       aes(x = Year, y = n, colour = Driver_decider)) +
+  geom_point(size = 1, show.legend = FALSE) +
+  geom_line(alpha = 0.6, show.legend = FALSE) +
+  geom_smooth(se = FALSE, linewidth = 1, show.legend = FALSE) +
+  facet_grid(Driver_decider ~ Main_species, scales = "fixed") +
+  labs(
+    y = "Number of studies",
+    x = "Year"
+  ) +
+  theme_minimal() +
+  scale_color_brewer(palette = "Paired")
+
+#stats species interaction
+drivers_ts_species <- drivers_long_species %>%
+  group_by(Year, Main_species, Driver_decider) %>%
+  summarise(n = n(), .groups = "drop") %>%
+  complete(Year, Main_species, Driver_decider, fill = list(n = 0)) %>%
+  group_by(Year) %>%
+  mutate(N = sum(n)) %>%
+  ungroup()
+drivers_ts_species$Year_scaled <- scale(drivers_ts_species$Year, center = TRUE, scale = TRUE)
+
+drivers_ts_species <- drivers_ts_species %>%
+  left_join(abstracts_per_year, by = "Year") #need the number of abstracts as the total max number of occurence of the discipline
+
+glm_results <- drivers_ts_species %>%
   group_by(Driver_decider) %>%
-  do({
-    m <- glm(n ~ scale(Year), family = poisson, data = .)
-    disp <- sum(residuals(m, type = "pearson")^2) / df.residual(m)
-    data.frame(dispersion = disp)
-  })
-check_dispersion
+  group_modify(~ {
+    
+    m <- glm(
+      cbind(n, N_abstracts - n) ~ Year_scaled * Main_species,
+      family = quasibinomial(),   # safer default
+      data = .x
+    )
+    
+    tidy(m) %>%
+      filter(term != "(Intercept)") %>%   # keep all explanatory terms
+      mutate(
+        dispersion = deviance(m) / df.residual(m),
+        n_years = n_distinct(.x$Year)
+      )
+  }) %>%
+  ungroup()
+glm_results #Estimates are log-odds change per 1 SD increase in year
+glm_results %>%
+  mutate(p_adj = p.adjust(p.value, method = "BH"))
 
 ########---------- METHODS ---------########
 
@@ -407,37 +665,37 @@ broad_method_long <- NoWPaS_df %>%
   filter(!is.na(Method_decider_broad) & Method_decider_broad != "NA")
 sort(table(broad_method_long$Method_decider_broad)) / nrow(broad_method_long) * 100
 
-#stacked barplot
-ggplot(broad_method_long, aes(x = Year, fill = Method_decider_broad)) +
-  geom_bar(position="fill") +
-  scale_y_continuous(labels = scales::percent_format()) +
-  labs(
-    y = "Proportion",
-    fill = "Method"
-  ) +
-  theme_minimal() +
-  scale_fill_brewer(palette = "Paired")
+# #stacked barplot
+# ggplot(broad_method_long, aes(x = Year, fill = Method_decider_broad)) +
+#   geom_bar(position="fill") +
+#   scale_y_continuous(labels = scales::percent_format()) +
+#   labs(
+#     y = "Proportion",
+#     fill = "Method"
+#   ) +
+#   theme_minimal() +
+#   scale_fill_brewer(palette = "Paired")
 
-#lines (relative proportion)
-broad_method_long %>% 
-  group_by(Year, Method_decider_broad) %>%
-  summarise(n = n(), .groups = "drop") %>%
-  complete(Year, Method_decider_broad, fill = list(n = 0)) %>%
-  group_by(Year) %>%
-  mutate(prop = n / sum(n)) %>%
-  ggplot(aes(x = Year, y = prop, color = Method_decider_broad)) +
-  geom_point(size = 1, show.legend = F) +
-  geom_line(size = 1, alpha=0.5, show.legend = F) +
-  geom_smooth(aes(fill = Method_decider_broad), se = T, linewidth = 1, show.legend = F)+
-  scale_y_continuous(labels = scales::percent_format()) +
-  labs(
-    y = "Proportion",
-    color = "Method"
-  ) +
-  theme_minimal() +
-  scale_color_brewer(palette = "Paired") +
-  scale_fill_brewer(palette = "Paired") +
-  facet_wrap(~ Method_decider_broad, scales = "fixed")
+# #lines (relative proportion)
+# broad_method_long %>% 
+#   group_by(Year, Method_decider_broad) %>%
+#   summarise(n = n(), .groups = "drop") %>%
+#   complete(Year, Method_decider_broad, fill = list(n = 0)) %>%
+#   group_by(Year) %>%
+#   mutate(prop = n / sum(n)) %>%
+#   ggplot(aes(x = Year, y = prop, color = Method_decider_broad)) +
+#   geom_point(size = 1, show.legend = F) +
+#   geom_line(size = 1, alpha=0.5, show.legend = F) +
+#   geom_smooth(aes(fill = Method_decider_broad), se = T, linewidth = 1, show.legend = F)+
+#   scale_y_continuous(labels = scales::percent_format()) +
+#   labs(
+#     y = "Proportion",
+#     color = "Method"
+#   ) +
+#   theme_minimal() +
+#   scale_color_brewer(palette = "Paired") +
+#   scale_fill_brewer(palette = "Paired") +
+#   facet_wrap(~ Method_decider_broad, scales = "fixed")
 
 #absolute numbers
 broad_method_long %>% 
@@ -495,29 +753,94 @@ glm_results #Estimates are log-odds change per 1 SD increase in year
 glm_results %>%
   mutate(p_adj = p.adjust(p.value, method = "BH"))
 
-#stats using counts
-counts_ts <- broad_method_long %>%
-  group_by(Year, Method_decider_broad) %>%
-  summarise(n = n(), .groups = "drop") %>%
-  complete(Year, Method_decider_broad, fill = list(n = 0))
-trend_pois <- counts_ts %>%
-  group_by(Method_decider_broad) %>%
-  do({
-    m <- glm(n ~ scale(Year), family = poisson, data = .)
-    tidy(m)
-  }) %>%
-  filter(term == "scale(Year)")
-trend_pois <- trend_pois %>%
-  ungroup() %>%
+# #stats using counts
+# counts_ts <- broad_method_long %>%
+#   group_by(Year, Method_decider_broad) %>%
+#   summarise(n = n(), .groups = "drop") %>%
+#   complete(Year, Method_decider_broad, fill = list(n = 0))
+# trend_pois <- counts_ts %>%
+#   group_by(Method_decider_broad) %>%
+#   do({
+#     m <- glm(n ~ scale(Year), family = poisson, data = .)
+#     tidy(m)
+#   }) %>%
+#   filter(term == "scale(Year)")
+# trend_pois <- trend_pois %>%
+#   ungroup() %>%
+#   mutate(
+#     p_adj = p.adjust(p.value, method = "BH"),
+#     direction = case_when(
+#       estimate > 0 & p_adj < 0.05 ~ "Increasing",
+#       estimate < 0 & p_adj < 0.05 ~ "Decreasing",
+#       TRUE ~ "Stable"
+#     )
+#   )
+# trend_pois
+
+#check methods by species
+method_long_species <- broad_method_long %>%
   mutate(
-    p_adj = p.adjust(p.value, method = "BH"),
-    direction = case_when(
-      estimate > 0 & p_adj < 0.05 ~ "Increasing",
-      estimate < 0 & p_adj < 0.05 ~ "Decreasing",
-      TRUE ~ "Stable"
+    Main_species = case_when(
+      grepl("Atlantic salmon", Focus_species, ignore.case = TRUE) ~ "Atlantic salmon",
+      grepl("Brown trout", Focus_species, ignore.case = TRUE) ~ "Brown trout",
+      TRUE ~ NA_character_
     )
-  )
-trend_pois
+  ) %>%
+  filter(!is.na(Main_species))
+
+method_ts_species <- method_long_species %>%
+  group_by(Year, Main_species, Method_decider_broad) %>%
+  summarise(n = n(), .groups = "drop") %>%
+  complete(Year, Main_species, Method_decider_broad, fill = list(n = 0))
+
+ggplot(method_ts_species,
+       aes(x = Year, y = n, colour = Method_decider_broad)) +
+  geom_point(size = 1, show.legend = FALSE) +
+  geom_line(alpha = 0.6, show.legend = FALSE) +
+  geom_smooth(se = FALSE, linewidth = 1, show.legend = FALSE) +
+  facet_grid(Method_decider_broad ~ Main_species, scales = "fixed") +
+  labs(
+    y = "Number of studies",
+    x = "Year"
+  ) +
+  theme_minimal() +
+  scale_color_brewer(palette = "Paired")
+
+#stats species interaction
+method_ts_species <- method_long_species %>%
+  group_by(Year, Main_species, Method_decider_broad) %>%
+  summarise(n = n(), .groups = "drop") %>%
+  complete(Year, Main_species, Method_decider_broad, fill = list(n = 0)) %>%
+  group_by(Year) %>%
+  mutate(N = sum(n)) %>%
+  ungroup()
+method_ts_species$Year_scaled <- scale(method_ts_species$Year, center = TRUE, scale = TRUE)
+
+method_ts_species <- method_ts_species %>%
+  left_join(abstracts_per_year, by = "Year") #need the number of abstracts as the total max number of occurence of the discipline
+
+glm_results <- method_ts_species %>%
+  group_by(Method_decider_broad) %>%
+  group_modify(~ {
+    
+    m <- glm(
+      cbind(n, N_abstracts - n) ~ Year_scaled * Main_species,
+      family = quasibinomial(),   # safer default
+      data = .x
+    )
+    
+    tidy(m) %>%
+      filter(term != "(Intercept)") %>%   # keep all explanatory terms
+      mutate(
+        dispersion = deviance(m) / df.residual(m),
+        n_years = n_distinct(.x$Year)
+      )
+  }) %>%
+  ungroup()
+glm_results #Estimates are log-odds change per 1 SD increase in year
+adjusted <- glm_results %>%
+  mutate(p_adj = p.adjust(p.value, method = "BH"))
+
 
 ########---------- TRAITS ---------########
 traits_long <- NoWPaS_df %>%
