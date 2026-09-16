@@ -1,0 +1,8 @@
+"Method_decider_broad","term","estimate","std.error","statistic","p.value","dispersion","n_years","p_adj"
+"Biological modelling","Year_scaled",0.071,0.177,0.403,0.692,1.545,21,0.834
+"Experimental approach","Year_scaled",-0.157,0.103,-1.525,0.144,1.324,21,0.335
+"Field survey and monitoring","Year_scaled",0.026,0.121,0.213,0.834,2.03,21,0.834
+"Habitat characterization","Year_scaled",-0.37,0.138,-2.685,0.015,1.148,21,0.051
+"Molecular approach","Year_scaled",0.508,0.103,4.914,0,1.237,21,0.001
+"Physiological analysis","Year_scaled",0.028,0.119,0.233,0.819,1.118,21,0.834
+"Stable isotopes and archival tags","Year_scaled",0.167,0.174,0.965,0.347,1.127,21,0.607

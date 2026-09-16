@@ -1,0 +1,7 @@
+"Driver_decider","term","estimate","std.error","statistic","p.value","dispersion","n_years","p_adj"
+"Aquaculture","Year_scaled",0.394,0.128,3.086,0.006,0.811,21,0.018
+"Climate change","Year_scaled",0.779,0.176,4.436,0,1.448,21,0.002
+"Fundamental research","Year_scaled",-0.026,0.087,-0.3,0.768,1.109,21,0.805
+"Hydropower and dams","Year_scaled",0.049,0.115,0.428,0.673,0.907,21,0.805
+"Management and restoration","Year_scaled",0.227,0.11,2.059,0.054,1.516,21,0.107
+"Stocking","Year_scaled",-0.054,0.215,-0.25,0.805,1.767,21,0.805

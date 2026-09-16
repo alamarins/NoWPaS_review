@@ -1,0 +1,10 @@
+"Discipline_decider","term","estimate","std.error","statistic","p.value","dispersion","n_years","p_adj"
+"Behavioural ecology","Year_scaled",-0.015,0.13,-0.117,0.908,0.963,21,0.912
+"Disease and parasitology","Year_scaled",0.315,0.23,1.368,0.187,1.805,21,0.337
+"Ecology","Year_scaled",-0.01,0.091,-0.112,0.912,1.134,21,0.912
+"Evolutionary biology","Year_scaled",0.303,0.187,1.617,0.122,2.293,21,0.337
+"Genetics and genomics","Year_scaled",0.449,0.108,4.153,0.001,1.073,21,0.002
+"Habitat use","Year_scaled",-0.191,0.161,-1.187,0.25,1.354,21,0.375
+"Hydro-geomorphology","Year_scaled",-0.686,0.133,-5.16,0,0.993,21,0.001
+"Movement ecology","Year_scaled",0.072,0.129,0.556,0.585,1.488,21,0.752
+"Physiology","Year_scaled",0.106,0.077,1.375,0.185,0.536,21,0.337
