@@ -69,6 +69,21 @@ fit_glm_trend_time <- function(data, group_var, interaction_var = NULL) {
     mutate(across(where(is.numeric), ~round(., 3)))
 }
 
+get_species_slopes <- function(data, group_var) {
+  data %>%
+    group_by(.data[[group_var]]) %>%
+    group_modify(~ {
+      m <- glm(cbind(n, N_abstracts - n) ~ Year_scaled * Main_species,
+               family = quasibinomial(), data = .x)
+      emtrends(m, ~ Main_species, var = "Year_scaled") %>%
+        summary(infer = TRUE) %>%
+        as.data.frame()
+    }) %>%
+    ungroup() %>%
+    mutate(p_adj = p.adjust(p.value, method = "BH")) %>%
+    mutate(across(where(is.numeric), ~round(., 3)))
+}
+
 #significance stars in plots
 p_to_stars <- function(p) {
   cut(p, breaks = c(-Inf, 0.001, 0.01, 0.051, Inf),
@@ -88,6 +103,27 @@ make_stars_df <- function(results_df, group_var, plot_data, y_var,
     select(all_of(group_var), stars) %>%
     mutate(x = x_pos) %>%
     mutate(y = y_pos) %>%
+    rename(label = stars)
+}
+
+make_stars_df_species <- function(slopes_df,
+                                  group_var = "Discipline_decider",
+                                  plot_data,
+                                  y_var = "n",
+                                  x_pos = NULL,
+                                  y_pos = NULL) {
+  
+  sig <- slopes_df %>%
+    mutate(stars = as.character(p_to_stars(p_adj))) %>%
+    filter(stars != "")
+  
+  if (nrow(sig) == 0) return(NULL)
+  
+  if (is.null(x_pos)) x_pos <- max(plot_data$Year, na.rm = TRUE)
+  
+  sig %>%
+    select(all_of(group_var), Main_species, stars) %>%
+    mutate(x = x_pos, y=y_pos) %>%
     rename(label = stars)
 }
 
@@ -761,6 +797,21 @@ discipline_ts_species <- discipline_species %>%
 
 discipline_ts_species$Discipline_decider <- recode(discipline_ts_species$Discipline_decider,
                                         "Hydro-geomorphology" = "Hydro-geo-\nmorphology")
+
+#stats species interaction
+discipline_ts_species_stats <- discipline_ts_species %>%
+  group_by(Year) %>%
+  mutate(N = sum(n)) %>%
+  ungroup() %>%
+  mutate(Year_scaled = scale(Year, center = TRUE, scale = TRUE)) %>%
+  left_join(abstracts_per_year, by = "Year") #need the number of abstracts as the total max number of occurence of the discipline
+
+adjusted <- fit_glm_trend_time(discipline_ts_species_stats, "Discipline_decider", interaction_var = "Main_species")
+write.csv(adjusted, file.path(results_dir, "glm_disciplines_time_species.csv"), row.names = FALSE)
+
+species_slopes <- get_species_slopes(discipline_ts_species_stats, "Discipline_decider")
+stars_df <- make_stars_df_species(species_slopes, "Discipline_decider", discipline_ts_species, "n", x_pos=2025, y_pos=12)
+
 discipline_time_species <- ggplot(discipline_ts_species,
        aes(x = Year, y = n)) +
   geom_point(size = 1, show.legend = FALSE) +
@@ -780,19 +831,9 @@ discipline_time_species <- ggplot(discipline_ts_species,
     strip.text = element_text(size = 8, face = "bold"),
     axis.text.x = element_text(angle = 45, hjust = 1),
     strip.background = element_rect(colour = "black", fill = "white")
-  )
-ggsave(file.path("figures", "disciplines_time_species.png"), plot = discipline_time_species, width = 5, height = 8, units = "in", dpi = 500)
+  ) +
+  geom_text(data=stars_df, aes(x=x, y=y, label=label), inherit.aes = FALSE, size=4, hjust=1.2, vjust=1.2)
 
-#stats species interaction
-discipline_ts_species_stats <- discipline_ts_species %>%
-group_by(Year) %>%
-  mutate(N = sum(n)) %>%
-  ungroup() %>%
-  mutate(Year_scaled = scale(Year, center = TRUE, scale = TRUE)) %>%
-  left_join(abstracts_per_year, by = "Year") #need the number of abstracts as the total max number of occurence of the discipline
-
-adjusted <- fit_glm_trend_time(discipline_ts_species_stats, "Discipline_decider", interaction_var = "Main_species")
-write.csv(adjusted, file.path(results_dir, "glm_disciplines_time_species.csv"), row.names = FALSE)
 
 ########---------- METHODS (BROAD) ---------########
 broad_method <- NoWPaS_df %>%
@@ -884,12 +925,25 @@ method_ts_species <- method_species %>%
   summarise(n = n(), .groups = "drop") %>%
   complete(Year, Main_species, Method_decider_broad, fill = list(n = 0))
 
+#stats species interaction
+method_ts_species_stats <- method_ts_species %>%
+  group_by(Year) %>%
+  mutate(N = sum(n)) %>%
+  ungroup() %>%
+  mutate(Year_scaled = scale(Year, center = TRUE, scale = TRUE)) %>%
+  left_join(abstracts_per_year, by = "Year") #need the number of abstracts as the total max number of occurence of the discipline
+
+adjusted <- fit_glm_trend_time(method_ts_species_stats, "Method_decider_broad", interaction_var = "Main_species")
+write.csv(adjusted, file.path(results_dir, "glm_methods_time_species.csv"), row.names = FALSE)
+
+species_slopes <- get_species_slopes(method_ts_species_stats, "Method_decider_broad")
+stars_df <- make_stars_df_species(species_slopes, "Method_decider_broad", method_ts_species, "n", x_pos=2025, y_pos=12)
+
 method_time_species <- ggplot(method_ts_species,
-       aes(x = Year, y = n)) +
+                              aes(x = Year, y = n)) +
   geom_point(size = 1, show.legend = FALSE) +
-  geom_line(size=1, alpha = 0.5, show.legend = FALSE) +
+  geom_line(size = 1, alpha = 0.5, show.legend = FALSE) +
   geom_smooth(method="lm", se = T, linewidth = 1, show.legend = FALSE, color="black") +
-  #facet_grid(Method_decider_broad ~ Main_species, scales = "fixed") +
   facet_grid(
     Method_decider_broad ~ Main_species,
     scales = "fixed",
@@ -904,19 +958,12 @@ method_time_species <- ggplot(method_ts_species,
     strip.text = element_text(size = 8, face = "bold"),
     axis.text.x = element_text(angle = 45, hjust = 1),
     strip.background = element_rect(colour = "black", fill = "white")
-  )
-ggsave(file.path(figures_dir, "method_time_species.png"), plot = method_time_species, width = 5, height = 8, units = "in", dpi = 500)
+  ) +
+  geom_text(data=stars_df, aes(x=x, y=y, label=label), inherit.aes = FALSE, size=4, hjust=1.2, vjust=1.2)
 
-#stats species interaction
-method_ts_species_stats <- method_ts_species %>%
-  group_by(Year) %>%
-  mutate(N = sum(n)) %>%
-  ungroup() %>%
-  mutate(Year_scaled = scale(Year, center = TRUE, scale = TRUE)) %>%
-  left_join(abstracts_per_year, by = "Year") #need the number of abstracts as the total max number of occurence of the discipline
+discipline_method_time_species <- ggarrange(discipline_time_species, method_time_species, ncol = 2, nrow = 1, labels = c("(a)", "(b)"), font.label = list(size = 16, face = "plain"))
+ggsave(file.path(figures_dir, "discipline_method_time_species.png"), plot = discipline_method_time_species, width = 8, height = 8, units = "in", dpi = 500)
 
-adjusted <- fit_glm_trend_time(method_ts_species_stats, "Method_decider_broad", interaction_var = "Main_species")
-write.csv(adjusted, file.path(results_dir, "glm_methods_time_species.csv"), row.names = FALSE)
 
 ########---------- METHODS (DETAILED) ---------########
 
@@ -1583,6 +1630,18 @@ driver_ts_species <- drivers_species %>%
   summarise(n = n(), .groups = "drop") %>%
   complete(Year, Main_species, Driver_decider, fill = list(n = 0))
 
+#stats species interaction
+drivers_ts_species_stats <- driver_ts_species %>%
+  group_by(Year) %>% mutate(N = sum(n)) %>% ungroup() %>%
+  mutate(Year_scaled = scale(Year, center = TRUE, scale = TRUE)) %>%
+  left_join(abstracts_per_year, by = "Year")
+
+adjusted <- fit_glm_trend_time(drivers_ts_species_stats, "Driver_decider", interaction_var = "Main_species")
+write.csv(adjusted, "results_models/glm_drivers_species_time.csv", row.names = FALSE)
+
+species_slopes <- get_species_slopes(drivers_ts_species_stats, "Driver_decider")
+stars_df <- make_stars_df_species(species_slopes, "Driver_decider", driver_ts_species, "n", x_pos=2025, y_pos=14)
+
 drivers_species_time <- ggplot(driver_ts_species,
        aes(x = Year, y = n)) +
   geom_point(size = 1, show.legend = FALSE) +
@@ -1603,17 +1662,11 @@ drivers_species_time <- ggplot(driver_ts_species,
     strip.text = element_text(size = 8, face = "bold"),
     axis.text.x = element_text(angle = 45, hjust = 1),
     strip.background = element_rect(colour = "black", fill = "white")
-  )
+  ) +
+  geom_text(data=stars_df, aes(x=x, y=y, label=label), inherit.aes = FALSE, size=4, hjust=1.2, vjust=1.2)
+
 ggsave(file.path(figures_dir, "drivers_species_time.png"), plot = drivers_species_time, width = 5, height = 8, units = "in", dpi = 500)
 
-#stats species interaction
-drivers_ts_species_stats <- driver_ts_species %>%
-  group_by(Year) %>% mutate(N = sum(n)) %>% ungroup() %>%
-  mutate(Year_scaled = scale(Year, center = TRUE, scale = TRUE)) %>%
-  left_join(abstracts_per_year, by = "Year")
-
-adjusted <- fit_glm_trend_time(drivers_ts_species_stats, "Driver_decider", interaction_var = "Main_species")
-write.csv(adjusted, "results_models/glm_drivers_species_time.csv", row.names = FALSE)
 
 ########---------- TRAITS ---------########
 traits <- NoWPaS_df %>%
